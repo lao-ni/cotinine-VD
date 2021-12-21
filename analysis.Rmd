@@ -1,0 +1,2988 @@
+---
+title: "分析过程"
+documentclass: ctexart
+geometry: left=1cm,right=1cm,top=2cm,bottom=2cm
+output:
+  html_document:
+    df_print: paged
+  fig_caption: yes
+  number_sections: yes
+  toc: yes
+  rticles::ctex: null
+  pdf_document: default
+---
+
+
+```{r setup,include=FALSE}
+library(foreign)
+library(tidyverse)
+library(dplyr)
+library(tableone)
+library(nnet)
+library(mice)
+library(VIM)
+library(compareGroups)
+library(hash)
+library(tableone)
+library(car)
+```
+
+
+
+导入所有年份的demo数据集并将它们合并，共有72126条记录。我们选择并留下其中6个变量,分别是序号SEQN，性别gender，年龄age，种族race，PIR,cycle，cycle是我们自己加入的表示年份的一个变量。为了统一所有年份的年龄表达方式，年龄>=80岁的全部设为80。
+```{r}
+#导入所有的demo数据集
+demo1314 <- read.xport("DEMO_H.XPT")
+demo1314 <- dplyr::select(demo1314,SEQN,RIAGENDR,RIDAGEYR,RIDRETH1,INDFMPIR)
+demo1314 <- mutate(demo1314,cycle="13-14")
+
+demo1112 <- read.xport("DEMO_G.XPT")
+demo1112 <- dplyr::select(demo1112,SEQN,RIAGENDR,RIDAGEYR,RIDRETH1,INDFMPIR)
+demo1112 <- mutate(demo1112,cycle="11-12")
+
+demo0910 <- read.xport("DEMO_F.XPT")
+demo0910 <- dplyr::select(demo0910,SEQN,RIAGENDR,RIDAGEYR,RIDRETH1,INDFMPIR)
+demo0910 <- mutate(demo0910,cycle="09-10")
+
+demo0708 <- read.xport("DEMO_E.XPT")
+demo0708 <- dplyr::select(demo0708,SEQN,RIAGENDR,RIDAGEYR,RIDRETH1,INDFMPIR)
+demo0708 <- mutate(demo0708,cycle="07-08")
+
+
+demo0506 <- read.xport("DEMO_D.XPT")
+demo0506 <- dplyr::select(demo0506,SEQN,RIAGENDR,RIDAGEYR,RIDRETH1,INDFMPIR)
+demo0506 <- mutate(demo0506,cycle="05-06")
+
+demo0304 <- read.xport("DEMO_C.XPT")
+demo0304 <- dplyr::select(demo0304,SEQN,RIAGENDR,RIDAGEYR,RIDRETH1,INDFMPIR)
+demo0304 <- mutate(demo0304,cycle="03-04")
+
+demo0102 <- read.xport("DEMO_B.XPT")
+demo0102 <- dplyr::select(demo0102,SEQN,RIAGENDR,RIDAGEYR,RIDRETH1,INDFMPIR)
+demo0102 <- mutate(demo0102,cycle="01-02")
+
+#把2001-2014年的所有demo数据合并以后，共有72126条记录，6个变量,分别是序号，性别，年龄，种族，PIR,cycle
+demo_merge <- dplyr::bind_rows(demo0102,demo0304,demo0506,demo0708,demo0910,demo1112,demo1314)
+demo_merge <- rename(demo_merge,gender=RIAGENDR,age=RIDAGEYR,race=RIDRETH1,PIR=INDFMPIR)
+
+#为了统一所有年份，年龄>=80岁的全部设为80
+demo_merge <-mutate(demo_merge,age=ifelse(age>=80,80,age))
+#把不需要的数据集删去
+rm(demo0102,demo0304,demo0506,demo0708,demo0910,demo1112,demo1314)
+```
+
+导入所有年份的VD数据集并合并，共有64786条记录，留下2个变量,分别是序号SEQN，VitD
+```{r}
+
+#导入维生素D 的数据
+VD1314 <- read.xport("VID_H.XPT")
+VD1314 <- select(VD1314,SEQN,LBXVIDMS)
+VD1314 <- rename(VD1314,VitD=LBXVIDMS)
+
+VD1112 <- read.xport("VID_G.XPT")
+VD1112 <- select(VD1112,SEQN,LBXVIDMS)
+VD1112 <- rename(VD1112,VitD=LBXVIDMS)
+
+VD0910 <- read.xport("VID_F.XPT")
+VD0910 <- select(VD0910,SEQN,LBXVIDMS)
+VD0910 <- rename(VD0910,VitD=LBXVIDMS)
+
+VD0708 <- read.xport("VID_E.XPT")
+VD0708 <- select(VD0708,SEQN,LBXVIDMS)
+VD0708 <- rename(VD0708,VitD=LBXVIDMS)
+
+VD0506 <- read.xport("VID_D.XPT")
+VD0506 <- select(VD0506,SEQN,LBDVIDMS)
+VD0506 <- rename(VD0506,VitD=LBDVIDMS)
+
+VD0304 <- read.xport("VID_C.XPT")
+VD0304 <- select(VD0304,SEQN,LBDVIDMS)
+VD0304 <- rename(VD0304,VitD=LBDVIDMS)
+
+VD0102 <- read.xport("VID_B.XPT")
+VD0102 <- select(VD0102,SEQN,LBDVIDMS)
+VD0102 <- rename(VD0102,VitD=LBDVIDMS)
+
+
+#把2001-2014年的所有VD数据合并以后，共有64786条记录，2个变量,分别是序号，VitD
+VD_merge <- dplyr::bind_rows(VD0102,VD0304,VD0506,VD0708,VD0910,VD1112,VD1314)
+#把不需要的数据集删去
+rm(VD0102,VD0304,VD0506,VD0708,VD0910,VD1112,VD1314)
+
+```
+
+把demo和VD合并，all=F，也就是说只保留这俩都测了的人，共64786条记录
+```{r}
+#demo和VD合并
+merge_all<- merge(demo_merge,VD_merge,by.x="SEQN",by.y="SEQN",all=F)
+```
+
+导入所有年份的cotinine数据并合并，共有62509条记录。我们选择留下3个变量,分别是序号SEQN，cotinine, cotinine_comment（这个指标表示是否高于检测下限，0是at or above)
+```{r}
+#导入cotinine的数据
+cotinine0102 <- read.xport("L06_B.XPT")
+cotinine0102 <- select(cotinine0102,SEQN,LBXCOT,LBDCOTLC)
+
+cotinine0304 <- read.xport("L06COT_C.XPT")
+cotinine0304 <- select(cotinine0304,SEQN,LBXCOT)
+cotinine0304 <- mutate(cotinine0304,LBDCOTLC=ifelse(LBXCOT==0.011,1,0))
+
+cotinine0506 <- read.xport("COT_D.XPT")
+cotinine0506 <- select(cotinine0506,SEQN,LBXCOT)
+cotinine0506 <- mutate(cotinine0506,LBDCOTLC=ifelse(LBXCOT==0.011,1,0))
+
+cotinine0708 <- read.xport("COTNAL_E.XPT")
+cotinine0708 <- select(cotinine0708,SEQN,LBXCOT,LBDCOTLC)
+
+cotinine0910 <- read.xport("COTNAL_F.XPT")
+cotinine0910 <- select(cotinine0910,SEQN,LBXCOT,LBDCOTLC)
+
+cotinine1112 <- read.xport("COTNAL_G.XPT")
+cotinine1112 <- select(cotinine1112,SEQN,LBXCOT,LBDCOTLC)
+
+cotinine1314 <- read.xport("COT_H.XPT")
+cotinine1314 <- select(cotinine1314,SEQN,LBXCOT,LBDCOTLC)
+
+#把2001-2014年的所有cotinine数据合并以后，共有62509条记录，3个变量,分别是序号，cotinine,cotinine_comment
+cotinine_merge <- dplyr::bind_rows(cotinine0102,cotinine0304,cotinine0506,cotinine0708,cotinine0910,cotinine1112,cotinine1314)
+cotinine_merge <- rename(cotinine_merge,cotinine=LBXCOT,cotinine_comment=LBDCOTLC)
+
+#把不需要的数据集删去
+rm(cotinine0102,cotinine0304,cotinine0506,cotinine0708,cotinine0910,cotinine1112,cotinine1314)
+
+```
+
+总表中并入cotinine数据，得到共61227条数据。
+```{r}
+#总表中并入cotinine数据#61227
+merge_all<- merge(merge_all,cotinine_merge,by.x="SEQN",by.y="SEQN",all=F)
+```
+
+
+导入所有年份的BMI数据并合并，共有69236条记录，留下2个变量,分别是序号SEQN，BMI
+```{r}
+#导入BMI数据
+BMI0102 <- read.xport("BMX_B.XPT")
+BMI0102 <- select(BMI0102,SEQN,BMXBMI)
+
+BMI0304 <- read.xport("BMX_C.XPT")
+BMI0304 <- select(BMI0304,SEQN,BMXBMI)
+
+BMI0506 <- read.xport("BMX_D.XPT")
+BMI0506 <- select(BMI0506,SEQN,BMXBMI)
+
+BMI0708 <- read.xport("BMX_E.XPT")
+BMI0708 <- select(BMI0708,SEQN,BMXBMI)
+
+BMI0910 <- read.xport("BMX_F.XPT")
+BMI0910 <- select(BMI0910,SEQN,BMXBMI)
+
+BMI1112 <- read.xport("BMX_G.XPT")
+BMI1112 <- select(BMI1112,SEQN,BMXBMI)
+
+BMI1314 <- read.xport("BMX_H.XPT")
+BMI1314 <- select(BMI1314,SEQN,BMXBMI)
+
+#把2001-2014年的所有BMI数据合并以后，共有69236条记录，2个变量,分别是序号，BMI
+BMI_merge <- dplyr::bind_rows(BMI0102,BMI0304,BMI0506,BMI0708,BMI0910,BMI1112,BMI1314)
+BMI_merge <- rename(BMI_merge,BMI=BMXBMI)
+#把不需要的数据集删去
+rm(BMI0102,BMI0304,BMI0506,BMI0708,BMI0910,BMI1112,BMI1314)
+
+
+```
+
+
+总表中并入BMI数据，得到共61227条记录。
+```{r}
+#总表中并入BMI数据#61227
+merge_all<- merge(merge_all,BMI_merge,by.x="SEQN",by.y="SEQN",all=F)
+
+```
+
+选取PIR,cotinine,BMI,VitD这四个变量都不缺失的人，作为我们基本的分析人群，其他的分析在此基础上再做筛选。得到共49338条记录。
+加一个log_cotinine，是cotinine的log转化，用于后续分析。
+加一个维生素D的分类变量VitD_cat,即判断维生素D缺乏状态，deficiency or inadequate or adequate or adverse。
+gender数字转化成文字，race数字转化成文字,cotinine的分类变量cotinine_cat:nonsmoker or heavy_exposure or active_smoker。
+```{r}
+#去掉缺失值#49338
+merge_all <- filter(merge_all,!is.na(PIR)&!is.na(cotinine)&!is.na(BMI)&!is.na(VitD))
+
+
+#加一个log_cotinine
+merge_all <- mutate(merge_all,log_cotinine=log(cotinine))
+
+#加一个维生素D的分类变量VitD_cat,gender数字转化成文字，race数字转化成文字,cotinine的分类变量cotinine_cat
+merge_all <- mutate(merge_all,
+                    VitD_cat=
+                    ifelse(VitD<30,"deficiency",ifelse(VitD<50,"inadequate",ifelse(VitD<=125,"adequate","adverse"))),
+                    gender= ifelse(gender==1,"male","female"),
+                    race= ifelse(race==1|race==2,"Hispanic",
+                    ifelse(race==3,"Non-Hispanic White",
+                    ifelse(race==4,"Non-Hispanic Black","Other Race"))),
+                    cotinine_cat=ifelse(cotinine<1,"nonsmoker",ifelse(cotinine<=10,"heavy_exposure","active_smoker"))
+                    )
+
+
+```
+
+
+
+查看缺失,到这里为止应该没有缺失
+```{r}
+md.pattern(merge_all)
+a <- aggr(merge_all, P= F, N= T)
+summary(a)
+
+```
+
+
+
+
+
+
+
+选出成年人(>19岁)，建立新的数据框data_adult，共31126条记录,加上BMI_cat和age_group这两个变量。
+```{r}
+#选出成年人(>19) #31126
+data_adult <- filter(merge_all,age>19)
+
+#加一列BMI的分类BMI_cat
+data_adult <- mutate(data_adult,BMI_cat=ifelse(BMI<18.5,"underweight",ifelse(BMI<25,"normal",ifelse(BMI<30,"overweight","obese"))))
+
+#加一个年龄分组
+data_adult<- mutate(data_adult,age_group=ifelse(age<60,"20-59",">=60"))
+data_adult$age_group <- factor(data_adult$age_group)
+```
+
+
+选出未成年人(<=19岁)，建立新的数据框data_child，共18212条记录，加上BMI_cat和age_group这两个变量。
+```{r}
+#选出未成年人(<=19)
+data_child <- filter(merge_all,age<=19)
+#选出boys
+data_child_boys <- filter(data_child,gender=="male")
+#选出girls
+data_child_girls <- filter(data_child,gender=="female")
+
+#boys的BMI标准表
+boys <- read_csv("boys.csv")
+h1 <- hash( keys=boys$age, values=boys$P5)
+h2 <- hash( keys=boys$age, values=boys$P85)
+h3 <- hash( keys=boys$age, values=boys$P95)
+h1<-as.list(h1)
+h2<-as.list(h2)
+h3<-as.list(h3)
+
+#girls的BMI标准表
+girls <- read_csv("girls.csv")
+h4 <- hash( keys=girls$age, values=girls$P5)
+h5 <- hash( keys=girls$age, values=girls$P85)
+h6 <- hash( keys=girls$age, values=girls$P95)
+h4<-as.list(h4)
+h5<-as.list(h5)
+h6<-as.list(h6)
+
+
+#给boys加上BMI_cat
+data_child_boys <- mutate(data_child_boys,BMI_cat=
+                          ifelse( BMI< h1[as.character(age)],"underweight",
+                          ifelse( BMI< h2[as.character(age)],"normal", 
+                          ifelse( BMI< h3[as.character(age)],"overweight",
+                          "obese"
+                          ))))
+
+#给girls加上BMI_cat
+data_child_girls <- mutate(data_child_girls,BMI_cat=
+                          ifelse( BMI< h4[as.character(age)],"underweight",
+                          ifelse( BMI< h5[as.character(age)],"normal", 
+                          ifelse( BMI< h6[as.character(age)],"overweight",
+                          "obese"
+                          ))))
+
+
+#合并未成年人,这个data_child_use比之前data_child多了BMI，为了避免混淆，我们把data_child删去
+data_child_use <- dplyr::bind_rows(data_child_girls,data_child_boys)
+rm(data_child,h1,h2,h3,h4,h5,h6,boys,girls,data_child_girls,data_child_boys)
+
+#加上年龄分组
+data_child_use<- mutate(data_child_use,age_group=ifelse(age<12,"3-11","12-19"))
+data_child_use$age_group <- factor(data_child_use$age_group)
+
+                          
+```
+
+
+
+合并成年人和未成年人，回到原来的49338条记录。之前之所以先分开是因为成年人和未成年人判断BMI分类的标准有所区别。
+
+到此为止，data_use是我们所要的所有人和不能有缺失的变量，后面的分析中会再加入一些不全的变量。
+```{r}
+
+#合并成年人和未成年人
+data_use <- dplyr::bind_rows(data_child_use,data_adult)
+
+
+#把分类变量因子化
+data_use$gender <- factor(data_use$gender)
+data_use$race <- factor(data_use$race)
+data_use$cycle <- factor(data_use$cycle)
+data_use$cotinine_comment <- factor(data_use$cotinine_comment)
+data_use$BMI_cat <- factor(data_use$BMI_cat)
+data_use$cotinine_cat <- factor(data_use$cotinine_cat)
+data_use$VitD_cat <- factor(data_use$VitD_cat)
+
+```
+
+
+
+
+
+
+接下来要加入一些不全的变量
+
+
+导入DR(饮食)数据，注意这个只有从2007年开始有！！！
+
+把2007-2014年的所有DR数据合并以后，共有39166条记录，留下3个变量,分别是序号，VD_take，VD_take_cat
+
+```{r}
+#导入dietary数据,从2007年开始有
+DR0708 <- read.xport("DR1TOT_E.XPT")
+DR0708 <- select(DR0708,SEQN,DR1TVD)
+
+DR0910 <- read.xport("DR1TOT_F.XPT")
+DR0910 <- select(DR0910,SEQN,DR1TVD)
+
+DR1112 <- read.xport("DR1TOT_G.XPT")
+DR1112 <- select(DR1112,SEQN,DR1TVD)
+
+DR1314 <- read.xport("DR1TOT_H.XPT")
+DR1314 <- select(DR1314,SEQN,DR1TVD)
+
+#把2007-2014年的所有DR数据合并以后，共有39166条记录，2个变量,分别是序号，VD_take_cat
+DR_merge <- dplyr::bind_rows(DR0708,DR0910,DR1112,DR1314)
+DR_merge <- rename(DR_merge,VD_take=DR1TVD)
+DR_merge <- mutate(DR_merge,VD_take_cat=ifelse(VD_take==0,"No","Yes"))
+DR_merge <- mutate(DR_merge,log_VD_take=log(VD_take))
+#把不需要的数据集删去
+rm(DR0708,DR0910,DR1112,DR1314)
+
+#把这里面真正的缺失（要计数的）设置成Missing
+DR_merge <- mutate(DR_merge,VD_take_cat=ifelse(is.na(VD_take_cat),"Missing",VD_take_cat))
+
+DR_merge <- select(DR_merge,SEQN,VD_take,log_VD_take,VD_take_cat)
+                   
+                   
+#查看缺失值，应该没有了，全变成Missing了
+md.pattern(DR_merge)
+summary( aggr(DR_merge, P= F, N= T))
+
+```
+
+
+总表中并入DR_merge
+```{r}
+data_use<- merge(data_use,DR_merge,by.x="SEQN",by.y="SEQN",all.x=TRUE)
+```
+
+
+导入activity数据， 65517,三个变量，分别是SEQN,vigorous_ac,moderate_ac
+注意这个变量只有12岁开始的！！！
+```{r}
+activity0102 <- read.xport("PAQ_B.XPT")
+activity0102 <- select(activity0102,SEQN,PAD200,PAD320)
+
+activity0304 <- read.xport("PAQ_C.XPT")
+activity0304 <- select(activity0304,SEQN,PAD200,PAD320)
+
+activity0506 <- read.xport("PAQ_D.XPT")
+activity0506 <- select(activity0506,SEQN,PAD200,PAD320)
+
+#2001-2006合并，28796，三个变量，分别是SEQN,vigorous_ac,moderate_ac
+activity01_06 <- dplyr::bind_rows(activity0102,activity0304,activity0506)
+activity01_06 <- rename(activity01_06,vigorous=PAD200,moderate=PAD320)
+activity01_06 <- mutate(activity01_06,vigorous_ac=ifelse(vigorous==1,"Yes",ifelse(vigorous==2|vigorous==3,"No",NA)))
+activity01_06 <- mutate(activity01_06,moderate_ac=ifelse(moderate==1,"Yes",ifelse(moderate==2|moderate==3,"No",NA)))
+activity01_06 <-  select(activity01_06,SEQN,vigorous_ac,moderate_ac)
+rm(activity0102,activity0304,activity0506)
+
+#2007-2014变量不一样，先搞成一致的再和之前合并
+
+activity0708 <- read.xport("PAQ_E.XPT")
+activity0708 <- select(activity0708,SEQN,PAQ605,PAQ620,PAQ650,PAQ665)
+
+activity0910 <- read.xport("PAQ_F.XPT")
+activity0910 <- select(activity0910,SEQN,PAQ605,PAQ620,PAQ650,PAQ665)
+
+activity1112 <- read.xport("PAQ_G.XPT")
+activity1112 <- select(activity1112,SEQN,PAQ605,PAQ620,PAQ650,PAQ665)
+
+activity1314 <- read.xport("PAQ_H.XPT")
+activity1314 <- select(activity1314,SEQN,PAQ605,PAQ620,PAQ650,PAQ665)
+
+
+#2007-2014合并，37721，三个变量，分别是SEQN,vigorous_ac,moderate_ac
+activity07_14 <- dplyr::bind_rows(activity0708,activity0910,activity1112,activity1314)
+activity07_14 <- rename(activity07_14,vigorous1=PAQ605,vigorous2=PAQ650,moderate1=PAQ620,moderate2=PAQ665)
+
+activity07_14 <- mutate(activity07_14,vigorous_ac1=ifelse(vigorous1==1,"Yes",ifelse(vigorous1==2|vigorous1==3,"No",NA)))
+activity07_14 <- mutate(activity07_14,moderate_ac1=ifelse(moderate1==1,"Yes",ifelse(moderate1==2|moderate1==3,"No",NA)))
+activity07_14 <- mutate(activity07_14,vigorous_ac2=ifelse(vigorous2==1,"Yes",ifelse(vigorous2==2|vigorous2==3,"No",NA)))
+activity07_14 <- mutate(activity07_14,moderate_ac2=ifelse(moderate2==1,"Yes",ifelse(moderate2==2|moderate2==3,"No",NA)))
+
+activity07_14 <- mutate(activity07_14,vigorous_ac=ifelse(vigorous_ac1=="Yes"|vigorous_ac2=="Yes","Yes","No"))
+activity07_14 <- mutate(activity07_14,moderate_ac=ifelse(moderate_ac1=="Yes"|moderate_ac2=="Yes","Yes","No"))
+
+activity07_14 <-  select(activity07_14,SEQN,vigorous_ac,moderate_ac)
+rm(activity0708,activity0910,activity1112,activity1314)
+
+#两部分合并 65517,三个变量，分别是SEQN,vigorous_ac,moderate_ac
+activity_merge <- dplyr::bind_rows(activity01_06,activity07_14)
+rm(activity01_06,activity07_14)
+
+
+#把这里面真正的缺失（要计数的）设置成Missing
+activity_merge <- mutate(activity_merge,vigorous_ac=ifelse(is.na(vigorous_ac),"Missing",vigorous_ac))
+activity_merge <- mutate(activity_merge,moderate_ac=ifelse(is.na(moderate_ac),"Missing",moderate_ac))
+
+#查看缺失值，应该没有了，全变成Missing了
+md.pattern(activity_merge)
+summary( aggr(activity_merge, P= F, N= T))
+```
+
+总表中并入activity_merge
+```{r}
+data_use<- merge(data_use,activity_merge,by.x="SEQN",by.y="SEQN",all.x=TRUE)
+```
+
+
+
+导入alcohol数据，37847，两个变量，分别是SEQN，alcohol_take
+这个变量2001-2010是20岁开始，2011-2014是18岁开始
+```{r}
+#读取alchohol数据
+ALCOHOL0102 <- read.xport("ALQ_B.XPT")
+ALCOHOL0102 <- select(ALCOHOL0102,SEQN,ALD100)
+ALCOHOL0102 <- rename(ALCOHOL0102,ALQ101=ALD100)
+
+
+ALCOHOL0304 <- read.xport("ALQ_C.XPT")
+ALCOHOL0304 <- select(ALCOHOL0304,SEQN,ALQ101)
+
+ALCOHOL0506 <- read.xport("ALQ_D.XPT")
+ALCOHOL0506 <- select(ALCOHOL0506,SEQN,ALQ101)
+
+ALCOHOL0708 <- read.xport("ALQ_E.XPT")
+ALCOHOL0708 <- select(ALCOHOL0708,SEQN,ALQ101)
+
+ALCOHOL0910 <- read.xport("ALQ_F.XPT")
+ALCOHOL0910 <- select(ALCOHOL0910,SEQN,ALQ101)
+
+ALCOHOL1112 <- read.xport("ALQ_G.XPT")
+ALCOHOL1112 <- select(ALCOHOL1112,SEQN,ALQ101)
+
+ALCOHOL1314 <- read.xport("ALQ_H.XPT")
+ALCOHOL1314 <- select(ALCOHOL1314,SEQN,ALQ101)
+
+#合并所有年份的数据，37847人
+alcohol_merge <- dplyr::bind_rows(ALCOHOL0102,ALCOHOL0304,ALCOHOL0506,ALCOHOL0708,ALCOHOL0910,ALCOHOL1112,ALCOHOL1314)
+alcohol_merge <- mutate(alcohol_merge,alcohol_take = ifelse(ALQ101==1,"Yes",ifelse(ALQ101==2,"No",NA)))
+                        
+                      
+#删去不需要的数据集
+rm(ALCOHOL0102,ALCOHOL0304,ALCOHOL0506,ALCOHOL0708,ALCOHOL0910,ALCOHOL1112,ALCOHOL1314)
+
+
+#把这里面真正的缺失（要计数的）设置成Missing
+alcohol_merge <- mutate(alcohol_merge,alcohol_take=ifelse(is.na(alcohol_take),"Missing",alcohol_take))
+alcohol_merge <-select(alcohol_merge,SEQN,alcohol_take)
+  
+#查看缺失值，应该没有了，全变成Missing了
+md.pattern(alcohol_merge)
+summary( aggr(alcohol_merge, P= F, N= T))
+
+
+```
+
+总表中并入alcohol_merge
+```{r}
+data_use<- merge(data_use,alcohol_merge,by.x="SEQN",by.y="SEQN",all.x=TRUE)
+```
+
+导入tobacco数据，49229，两个变量，分别是SEQN，tobacco_take
+这个变量是12岁开始的！！！
+```{r}
+
+TOB0102 <- read.xport("SMQMEC_B.XPT")
+TOB0102 <- select(TOB0102,SEQN,SMQ680)
+
+
+
+TOB0304 <- read.xport("SMQMEC_C.XPT")
+TOB0304 <- select(TOB0304,SEQN,SMQ680)
+
+TOB0506 <- read.xport("SMQRTU_D.XPT")
+TOB0506 <- select(TOB0506,SEQN,SMQ680)
+
+TOB0708 <- read.xport("SMQRTU_E.XPT")
+TOB0708 <- select(TOB0708,SEQN,SMQ680)
+
+TOB0910 <- read.xport("SMQRTU_F.XPT")
+TOB0910 <- select(TOB0910,SEQN,SMQ680)
+
+TOB1112 <- read.xport("SMQRTU_G.XPT")
+TOB1112 <- select(TOB1112,SEQN,SMQ680)
+
+TOB1314 <- read.xport("SMQRTU_H.XPT")
+TOB1314 <- select(TOB1314,SEQN,SMQ681)
+TOB1314 <- rename(TOB1314,SMQ680 = SMQ681)
+
+#合并所有年份的数据，49229人
+tobacco_merge <- dplyr::bind_rows(TOB0102,TOB0304,TOB0506,TOB0708,TOB0910,TOB1112,TOB1314)
+
+tobacco_merge <- mutate(tobacco_merge,tobacco_take = ifelse(SMQ680==1,"Yes",ifelse(SMQ680==2,"No",NA)))
+                        
+                      
+#删去不需要的数据集
+rm(TOB0102,TOB0304,TOB0506,TOB0708,TOB0910,TOB1112,TOB1314)
+
+#把这里面真正的缺失（要计数的）设置成Missing
+tobacco_merge <- mutate(tobacco_merge,tobacco_take=ifelse(is.na(tobacco_take),"Missing",tobacco_take))
+tobacco_merge <-select(tobacco_merge,SEQN,tobacco_take)
+  
+#查看缺失值，应该没有了，全变成Missing了
+md.pattern(tobacco_merge)
+summary( aggr(tobacco_merge, P= F, N= T))
+
+
+```
+
+
+总表中并入tobacco_merge
+```{r}
+data_use<- merge(data_use,tobacco_merge,by.x="SEQN",by.y="SEQN",all.x=TRUE)
+```
+
+
+导入kidney数据集，.8913，两个变量，分别是SEQN，kidney_weak
+这个变量是20岁开始的！！！
+```{r}
+
+kidney0102 <- read.xport("KIQ_U_B.XPT")
+kidney0102 <- select(kidney0102,SEQN,KIQ022)
+
+
+kidney0304 <- read.xport("KIQ_U_C.XPT")
+kidney0304 <- select(kidney0304,SEQN,KIQ022)
+
+kidney0506 <- read.xport("KIQ_U_D.XPT")
+kidney0506 <- select(kidney0506,SEQN,KIQ022)
+
+kidney0708 <- read.xport("KIQ_U_E.XPT")
+kidney0708 <- select(kidney0708,SEQN,KIQ022)
+
+kidney0910 <- read.xport("KIQ_U_F.XPT")
+kidney0910 <- select(kidney0910,SEQN,KIQ022)
+
+kidney1112 <- read.xport("KIQ_U_G.XPT")
+kidney1112 <- select(kidney1112,SEQN,KIQ022)
+
+kidney1314 <- read.xport("KIQ_U_H.XPT")
+kidney1314 <- select(kidney1314,SEQN,KIQ022)
+
+#合并所有年份的数据，38913人
+kidney_merge <- dplyr::bind_rows(kidney0102,kidney0304,kidney0506,kidney0708,kidney0910,kidney1112,kidney1314)
+
+kidney_merge <- mutate(kidney_merge,kidney_weak = ifelse(KIQ022==1,"Yes",ifelse(KIQ022==2,"No",NA)))
+                        
+                      
+#删去不需要的数据集
+rm(kidney0102,kidney0304,kidney0506,kidney0708,kidney0910,kidney1112,kidney1314)
+
+#把这里面真正的缺失（要计数的）设置成Missing
+kidney_merge <- mutate(kidney_merge,kidney_weak=ifelse(is.na(kidney_weak),"Missing",kidney_weak))
+kidney_merge <-select(kidney_merge,SEQN,kidney_weak)
+  
+#查看缺失值，应该没有了，全变成Missing了
+md.pattern(kidney_merge)
+summary( aggr(kidney_merge, P= F, N= T))
+
+
+```
+
+总表中并入kidney_merge
+```{r}
+data_use<- merge(data_use,kidney_merge,by.x="SEQN",by.y="SEQN",all.x=TRUE)
+```
+
+导入避孕药服用情况，RHQ，25171，两个变量，分别是SEQN，contraceptive
+这个变量针对的是12岁开始的女性！！！
+```{r}
+
+RHQ0102 <- read.xport("RHQ_B.XPT")
+RHQ0102 <- select(RHQ0102,SEQN,RHQ420)
+
+
+RHQ0304 <- read.xport("RHQ_C.XPT")
+RHQ0304 <- select(RHQ0304,SEQN,RHQ420)
+
+RHQ0506 <- read.xport("RHQ_D.XPT")
+RHQ0506 <- select(RHQ0506,SEQN,RHQ420)
+
+RHQ0708 <- read.xport("RHQ_E.XPT")
+RHQ0708 <- select(RHQ0708,SEQN,RHQ420)
+
+RHQ0910 <- read.xport("RHQ_F.XPT")
+RHQ0910 <- select(RHQ0910,SEQN,RHQ420)
+
+RHQ1112 <- read.xport("RHQ_G.XPT")
+RHQ1112 <- select(RHQ1112,SEQN,RHQ420)
+
+RHQ1314 <- read.xport("RHQ_H.XPT")
+RHQ1314 <- select(RHQ1314,SEQN,RHQ420)
+
+#合并所有年份的数据，25171人
+RHQ_merge <- dplyr::bind_rows(RHQ0102,RHQ0304,RHQ0506,RHQ0708,RHQ0910,RHQ1112,RHQ1314)
+
+RHQ_merge <- mutate(RHQ_merge,contraceptive = ifelse(RHQ420==1,"Yes",ifelse(RHQ420==2,"No",NA)))
+                        
+                      
+#删去不需要的数据集
+rm(RHQ0102,RHQ0304,RHQ0506,RHQ0708,RHQ0910,RHQ1112,RHQ1314)
+
+#把这里面真正的缺失（要计数的）设置成Missing
+RHQ_merge <- mutate(RHQ_merge,contraceptive =ifelse(is.na(contraceptive ),"Missing",contraceptive ))
+RHQ_merge <-select(RHQ_merge,SEQN,contraceptive)
+  
+#查看缺失值，应该没有了，全变成Missing了
+md.pattern(RHQ_merge)
+summary( aggr(RHQ_merge, P= F, N= T))
+
+
+```
+
+总表中并入RHQ_merge
+```{r}
+data_use<- merge(data_use,RHQ_merge,by.x="SEQN",by.y="SEQN",all.x=TRUE)
+```
+
+——————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+到此为止我们已经把所有需要的变量都合并
+
+把后来并入的一些分类变量因子化
+```{r}
+#把后来并入的一些分类变量因子化
+data_use <- mutate(data_use,vigorous_ac=ifelse(age<12,NA,vigorous_ac))
+data_use <- mutate(data_use,moderate_ac=ifelse(age<12,NA,moderate_ac))
+data_use$VD_take_cat <- factor(data_use$VD_take_cat)
+data_use$vigorous_ac <- factor(data_use$vigorous_ac)
+data_use$moderate_ac <- factor(data_use$moderate_ac)
+data_use$alcohol_take <- factor(data_use$alcohol_take)
+data_use$tobacco_take <- factor(data_use$tobacco_take)
+data_use$kidney_weak <- factor(data_use$kidney_weak)
+data_use$contraceptive <- factor(data_use$contraceptive)
+```
+
+
+删掉不需要的数据表
+```{r}
+#删掉不需要的数据表
+rm(activity_merge,alcohol_merge,BMI_merge,cotinine_merge,data_adult,data_child_use,demo_merge,DR_merge,kidney_merge,merge_all,RHQ_merge,tobacco_merge,VD_merge)
+
+
+
+```
+
+-----------------------------------------------------------------------------
+到这里为止我们已经把所有需要的数据和信息都整合在data_use中，后面就是分析使用。
+-----------------------------------------------------------------------------
+
+
+**人口学信息表**
+
+female
+
+```{r}
+data_female <- filter(data_use,gender=="female")
+tab1<-descrTable(age_group ~ age+race+BMI+BMI_cat+cycle+PIR+cotinine+cotinine_comment+cotinine_cat
+                 +tobacco_take+alcohol_take+VitD+VitD_cat+contraceptive
+                 +kidney_weak+vigorous_ac+moderate_ac+VD_take_cat, 
+               data  =data_female,               
+               method = c(PIR = 2,cotinine=2,VitD=2))
+
+export2csv(tab1, file='female.csv')
+
+
+```
+
+
+male
+
+```{r}
+data_male <- filter(data_use,gender=="male")
+tab2<-descrTable(age_group ~ age+race+BMI+BMI_cat+cycle+PIR+cotinine+cotinine_comment+cotinine_cat
+                 +tobacco_take+alcohol_take+VitD+VitD_cat
+                 +kidney_weak+vigorous_ac+moderate_ac+VD_take_cat, 
+               data  =data_male,               
+               method = c(PIR = 2,cotinine=2,VitD=2))
+
+export2csv(tab2, file='male.csv')
+
+
+```
+
+
+all
+
+```{r}
+
+tab3<-descrTable(age_group ~ age+race+BMI+BMI_cat+cycle+PIR+cotinine+cotinine_comment+cotinine_cat
+                 +tobacco_take+alcohol_take+VitD+VitD_cat+contraceptive
+                 +kidney_weak+vigorous_ac+moderate_ac+VD_take_cat, 
+               data  =data_use,               
+               method = c(PIR = 2,cotinine=2,VitD=2),
+               show.all=TRUE)
+
+export2csv(tab3, file='all1013.csv')
+
+
+```
+
+
+按年份cycle分的table
+```{r}
+
+tab1013<-descrTable( cycle ~ age_group+age+race+BMI+BMI_cat+PIR+cotinine+cotinine_comment+cotinine_cat
+                     +tobacco_take+alcohol_take+VitD+VitD_cat+contraceptive
+                 +kidney_weak+vigorous_ac+moderate_ac+VD_take_cat, 
+               data  =data_use,               
+               method = c(PIR = 2,cotinine=2,VitD=2),max.ylev = 7,
+               show.all=TRUE)
+
+export2csv(tab1013, file='table1013.csv')
+
+
+```
+
+
+-----------------------------------------------------------------------------------------------------------------
+
+**全人群--differences between VD categorical groups**
+两种方法都列在了下面
+
+```{r}
+#先把BMI去因子化
+data_use$BMI_cat <- as.character(data_use$BMI_cat)
+
+#添加BMI_cat2，就是在BMI_cat的基础上把underweight和normal合并
+data_use <- mutate(data_use,BMI_cat2=ifelse(BMI_cat=="underweight","normal",BMI_cat))
+
+#然后把这两个都因子化
+data_use$BMI_cat <- as.factor(data_use$BMI_cat)
+data_use$BMI_cat2 <- as.factor(data_use$BMI_cat2)
+
+#把所有的Missing都变成NA
+data_use$VD_take_cat <- as.character(data_use$VD_take_cat)
+data_use$vigorous_ac <- as.character(data_use$vigorous_ac)
+data_use$moderate_ac <- as.character(data_use$moderate_ac)
+data_use$alcohol_take <- as.character(data_use$alcohol_take)
+data_use$tobacco_take <- as.character(data_use$tobacco_take)
+data_use$kidney_weak <- as.character(data_use$kidney_weak)
+data_use$contraceptive <- as.character(data_use$contraceptive)
+
+
+data_use <- mutate(data_use,VD_take_cat=ifelse(VD_take_cat=="Missing",NA,VD_take_cat))
+data_use <- mutate(data_use,vigorous_ac=ifelse(vigorous_ac=="Missing",NA,vigorous_ac))
+data_use <- mutate(data_use,moderate_ac=ifelse(moderate_ac=="Missing",NA,moderate_ac))
+data_use <- mutate(data_use,alcohol_take=ifelse(alcohol_take=="Missing",NA,alcohol_take))
+data_use <- mutate(data_use,tobacco_take=ifelse(tobacco_take=="Missing",NA,tobacco_take))
+data_use <- mutate(data_use,kidney_weak=ifelse(kidney_weak=="Missing",NA,kidney_weak))
+data_use <- mutate(data_use,contraceptive=ifelse(contraceptive=="Missing",NA,contraceptive))
+
+data_use$VD_take_cat <- as.factor(data_use$VD_take_cat)
+data_use$vigorous_ac <- as.factor(data_use$vigorous_ac)
+data_use$moderate_ac <- as.factor(data_use$moderate_ac)
+data_use$alcohol_take <- as.factor(data_use$alcohol_take)
+data_use$tobacco_take <- as.factor(data_use$tobacco_take)
+data_use$kidney_weak <- as.factor(data_use$kidney_weak)
+data_use$contraceptive <- as.factor(data_use$contraceptive)
+
+```
+
+```{r}
+tab<-descrTable(VitD_cat ~ age+gender+race+BMI+BMI_cat2+cycle+PIR+cotinine+cotinine_cat+VitD+VD_take_cat
+                +tobacco_take+alcohol_take+contraceptive+kidney_weak+vigorous_ac+moderate_ac, 
+               data  = data_use,               
+               method = c(PIR = 2,cotinine=2,VitD=2,
+               show.p.mul = TRUE))
+export2csv(tab, file='all_difference.csv')
+```
+
+```{r}
+myvars <- c("age","gender","race","BMI","BMI_cat2","cycle","PIR","cotinine","cotinine_cat","VitD","VD_take_cat","tobacco_take","alcohol_take","contraceptive","kidney_weak","vigorous_ac","moderate_ac")
+catvars <- c("gender","race","BMI_cat2","cycle","cotinine_cat","VD_take_cat","tobacco_take","alcohol_take","contraceptive","kidney_weak","vigorous_ac","moderate_ac")
+nonnormalvars <- c("PIR","cotinine","VitD")
+tab <- CreateTableOne(vars = myvars, data_use , factorVars = catvars, strata = "VitD_cat")
+tab <- print(tab,nonnormal=nonnormalvars,showAllLevels = TRUE)
+write.csv(tab,file="all_difference2.csv")
+
+```
+
+---------------------------------------------------------------------------------------------------------------------------
+
+
+
+
+**logistic回归**
+
+给各变量设定reference
+```{r}
+data_use$VitD_cat <- relevel(data_use$VitD_cat, "adequate")          #"adequate"作为ref
+data_use$cotinine_cat <- relevel(data_use$cotinine_cat, "nonsmoker") #"nonsmoker"作为ref
+data_use$race <- relevel(data_use$race, "Non-Hispanic White")        #"Non-Hispanic White"作为ref
+data_use$alcohol_take <- relevel(data_use$alcohol_take, "No")        #"No"作为ref
+data_use$tobacco_take <- relevel(data_use$tobacco_take, "No")        #"No"作为ref
+data_use$BMI_cat2 <- relevel(data_use$BMI_cat2, "normal")            #"normal"作为ref
+data_use$vigorous_ac <- relevel(data_use$vigorous_ac, "No")          #"No"作为ref
+data_use$moderate_ac <- relevel(data_use$moderate_ac, "Yes")         #"Yes"作为ref
+data_use$gender <- relevel(data_use$gender, "male")                  #"male"作为ref
+
+```
+
+
+
+全人群logistic回归
+```{r}
+#crude model 单因素logistic回归:VitD_cat~ cotinine_cat
+lg_model <- multinom(VitD_cat~ cotinine_cat, data=data_use)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1 多因素logistic回归
+lg_model <- multinom(VitD_cat~ cotinine_cat + gender + age + BMI_cat2 + race + PIR + cycle, data=data_use)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+```
+
+
+
+
+把人群分层
+```{r}
+data_use$gender<-as.character(data_use$gender)
+
+data_female <- filter(data_use,gender=="female") #24987
+data_male <- filter(data_use,gender=="male") #24351
+
+data_use$gender<-factor(data_use$gender)
+data_use$gender <- relevel(data_use$gender, "male")#"male"作为ref
+
+
+data_female1 <- filter(data_female,age<=11) #4099
+data_female2 <- filter(data_female,age>=12 & age<=19) #4826
+data_female3 <- filter(data_female,age>=20 & age<=59) #10989
+data_female4 <- filter(data_female,age>=60) #5073
+
+data_male1 <- filter(data_male,age<=11) #4256
+data_male2 <- filter(data_male,age>=12 & age<=19) #5031
+data_male3 <- filter(data_male,age>=20 & age<=59) #10023
+data_male4 <- filter(data_male,age>=60) #5041
+
+data1 <- filter(data_use,age<=11) #8355
+data2 <- filter(data_use,age>=12 & age<=19) #9857
+data3 <- filter(data_use,age>=20 & age<=59) #21012
+data4 <- filter(data_use,age>=60) #10114
+
+```
+
+
+
+60+岁logistic回归
+---------------------------------------------------------------------------------------------------------
+60+岁全体 data4 logistic回归
+```{r}
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat, data=data4)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat +gender+ age + BMI_cat2 + race + PIR + cycle + kidney_weak, data=data4)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+#m2
+lg_model <- multinom(VitD_cat~ cotinine_cat +gender+ age + BMI_cat2 + race + PIR + cycle + kidney_weak + alcohol_take, data=data4)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m2_OR.csv")
+write.csv(confi,file="m2_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m2_p.csv")
+
+#m3
+lg_model <- multinom(VitD_cat~ cotinine_cat +gender+ age + BMI_cat2 + race + PIR + cycle + kidney_weak + alcohol_take +vigorous_ac+moderate_ac, data=data4)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m3_OR.csv")
+write.csv(confi,file="m3_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m3_p.csv")
+```
+
+60+岁male data_male4 logistic回归
+```{r}
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat, data=data_male4)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat+ age + BMI_cat2 + race + PIR + cycle+ kidney_weak, data=data_male4)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+#m2
+lg_model <- multinom(VitD_cat~ cotinine_cat + age + BMI_cat2 + race + PIR + cycle + kidney_weak + alcohol_take, data=data_male4)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m2_OR.csv")
+write.csv(confi,file="m2_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m2_p.csv")
+
+#m3
+lg_model <- multinom(VitD_cat~ cotinine_cat + age + BMI_cat2 + race + PIR + cycle + kidney_weak + alcohol_take
+                     +vigorous_ac+moderate_ac, data=data_male4)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m3_OR.csv")
+write.csv(confi,file="m3_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m3_p.csv")
+```
+
+60+岁female data_female4 logistic回归
+```{r}
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat, data=data_female4)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat+ age + BMI_cat2 + race + PIR + cycle+contraceptive+ kidney_weak, data=data_female4)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+#m2
+lg_model <- multinom(VitD_cat~ cotinine_cat + age + BMI_cat2 + race + PIR + cycle +contraceptive+ kidney_weak +alcohol_take,data=data_female4)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m2_OR.csv")
+write.csv(confi,file="m2_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m2_p.csv")
+
+#m3
+lg_model <- multinom(VitD_cat~ cotinine_cat + age + BMI_cat2 + race + PIR + cycle + contraceptive+ kidney_weak + alcohol_take+vigorous_ac+moderate_ac , data=data_female4)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m3_OR.csv")
+write.csv(confi,file="m3_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m3_p.csv")
+```
+
+
+
+
+60+岁多元线性回归
+--------------------------------------------------------------
+60+岁全体多元线性回归
+```{r}
+data4 <- mutate(data4,log_VitD=log(VitD))
+
+
+fit0 <- lm(log_VitD ~ log_cotinine , data=data4)
+summary(fit0)
+confint(fit0)
+
+fit1 <- lm(log_VitD ~ log_cotinine +gender+ age + BMI_cat2 + race + PIR + cycle + kidney_weak, data=data4)
+summary(fit1)
+confint(fit1)
+
+fit2 <- lm(log_VitD ~ log_cotinine  +gender+ age + BMI_cat2 + race + PIR + cycle + kidney_weak 
+           + alcohol_take + vigorous_ac  + moderate_ac, data=data4) 
+summary(fit2)
+confint(fit2)
+
+
+```
+
+60+岁male多元线性回归
+```{r}
+data_male4 <- mutate(data_male4,log_VitD=log(VitD))
+
+
+fit0 <- lm(log_VitD ~ log_cotinine , data=data_male4)
+summary(fit0)
+confint(fit0)
+
+fit1 <- lm(log_VitD ~ log_cotinine  + age + BMI_cat2 + race + PIR + cycle+ kidney_weak, data=data_male4)
+summary(fit1)
+confint(fit1)
+
+fit2 <- lm(log_VitD ~ log_cotinine  + age + BMI_cat2 + race + PIR + cycle + kidney_weak + alcohol_take
+                     +vigorous_ac+moderate_ac , data=data_male4) 
+summary(fit2)
+confint(fit2)
+```
+
+60+岁female多元线性回归
+```{r}
+data_female4 <- mutate(data_female4,log_VitD=log(VitD))
+
+
+fit0 <- lm(log_VitD ~ log_cotinine , data=data_female4)
+summary(fit0)
+confint(fit0)
+
+fit1 <- lm(log_VitD ~ log_cotinine  + age + BMI_cat2 + race + PIR + cycle +contraceptive + kidney_weak, data=data_female4)
+summary(fit1)
+confint(fit1)
+
+fit2 <- lm(log_VitD ~ log_cotinine  + age + BMI_cat2 + race + PIR + cycle +contraceptive + kidney_weak + alcohol_take
+                     +vigorous_ac+moderate_ac , data=data_female4) 
+summary(fit2)
+confint(fit2)
+```
+
+
+
+20-59岁logistic回归
+--------------------------------------------------------------------------------------------------------
+20-59岁全体 data3 logistic回归
+```{r}
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat, data=data3)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat +gender+ age + BMI_cat2 + race + PIR + cycle + kidney_weak, data=data3)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+#m2
+lg_model <- multinom(VitD_cat~ cotinine_cat +gender+ age + BMI_cat2 + race + PIR + cycle + kidney_weak + alcohol_take, data=data3)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m2_OR.csv")
+write.csv(confi,file="m2_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m2_p.csv")
+
+#m3
+lg_model <- multinom(VitD_cat~ cotinine_cat +gender+ age + BMI_cat2 + race + PIR + cycle + kidney_weak + alcohol_take +vigorous_ac+moderate_ac, data=data3)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m3_OR.csv")
+write.csv(confi,file="m3_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m3_p.csv")
+```
+
+20-59岁male data_male3 logistic回归
+```{r}
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat, data=data_male3)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat+ age + BMI_cat2 + race + PIR + cycle+ kidney_weak, data=data_male3)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+#m2
+lg_model <- multinom(VitD_cat~ cotinine_cat + age + BMI_cat2 + race + PIR + cycle + kidney_weak + alcohol_take, data=data_male3)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m2_OR.csv")
+write.csv(confi,file="m2_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m2_p.csv")
+
+#m3
+lg_model <- multinom(VitD_cat~ cotinine_cat + age + BMI_cat2 + race + PIR + cycle + kidney_weak + alcohol_take
+                     +vigorous_ac+moderate_ac, data=data_male3)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m3_OR.csv")
+write.csv(confi,file="m3_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m3_p.csv")
+```
+
+20-59岁female data_female3 logistic回归
+```{r}
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat, data=data_female3)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat+ age + BMI_cat2 + race + PIR + cycle+contraceptive+ kidney_weak, data=data_female3)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+#m2
+lg_model <- multinom(VitD_cat~ cotinine_cat + age + BMI_cat2 + race + PIR + cycle +contraceptive+ kidney_weak +alcohol_take,data=data_female3)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m2_OR.csv")
+write.csv(confi,file="m2_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m2_p.csv")
+
+#m3
+lg_model <- multinom(VitD_cat~ cotinine_cat + age + BMI_cat2 + race + PIR + cycle + contraceptive+ kidney_weak + alcohol_take+vigorous_ac+moderate_ac , data=data_female3)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m3_OR.csv")
+write.csv(confi,file="m3_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m3_p.csv")
+```
+
+
+
+
+20-59岁多元线性回归
+-----------------------------------------------------------------------------------------------------------
+20-59岁全体多元线性回归
+```{r}
+data3 <- mutate(data3,log_VitD=log(VitD))
+
+
+fit0 <- lm(log_VitD ~ log_cotinine , data=data3)
+summary(fit0)
+confint(fit0)
+
+fit1 <- lm(log_VitD ~ log_cotinine +gender+ age + BMI_cat2 + race + PIR + cycle + kidney_weak, data=data3)
+summary(fit1)
+confint(fit1)
+
+fit2 <- lm(log_VitD ~ log_cotinine  +gender+ age + BMI_cat2 + race + PIR + cycle + kidney_weak 
+           + alcohol_take + vigorous_ac  + moderate_ac, data=data3) 
+summary(fit2)
+confint(fit2)
+
+
+```
+
+20-59岁male多元线性回归
+```{r}
+data_male3 <- mutate(data_male3,log_VitD=log(VitD))
+
+
+fit0 <- lm(log_VitD ~ log_cotinine , data=data_male3)
+summary(fit0)
+round(confint(fit0),6)
+
+fit1 <- lm(log_VitD ~ log_cotinine  + age + BMI_cat2 + race + PIR + cycle+ kidney_weak, data=data_male3)
+summary(fit1)
+round(confint(fit1),6)
+
+fit2 <- lm(log_VitD ~ log_cotinine  + age + BMI_cat2 + race + PIR + cycle + kidney_weak + alcohol_take
+                     +vigorous_ac+moderate_ac , data=data_male3) 
+summary(fit2)
+round(confint(fit2),6)
+```
+
+20-59岁female多元线性回归
+```{r}
+data_female3 <- mutate(data_female3,log_VitD=log(VitD))
+
+
+fit0 <- lm(log_VitD ~ log_cotinine , data=data_female3)
+summary(fit0)
+confint(fit0)
+
+fit1 <- lm(log_VitD ~ log_cotinine  + age + BMI_cat2 + race + PIR + cycle +contraceptive + kidney_weak, data=data_female3)
+summary(fit1)
+confint(fit1)
+
+fit2 <- lm(log_VitD ~ log_cotinine  + age + BMI_cat2 + race + PIR + cycle +contraceptive + kidney_weak + alcohol_take
+                     +vigorous_ac+moderate_ac , data=data_female3) 
+summary(fit2)
+confint(fit2)
+```
+
+
+12-19岁logistic回归
+---------------------------------------------------------------------------------------------------------------
+12-19岁全体 data2 logistic回归
+```{r}
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat, data=data2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat +gender+ age + BMI_cat2 + race + PIR + cycle , data=data2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+
+#m3
+lg_model <- multinom(VitD_cat~ cotinine_cat +gender+ age + BMI_cat2 + race + PIR + cycle +vigorous_ac+moderate_ac, data=data2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m3_OR.csv")
+write.csv(confi,file="m3_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m3_p.csv")
+```
+
+12-19岁male data_male2 logistic回归
+```{r}
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat, data=data_male2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat+ age + BMI_cat2 + race + PIR + cycle, data=data_male2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+
+
+#m3
+lg_model <- multinom(VitD_cat~ cotinine_cat + age + BMI_cat2 + race + PIR + cycle 
+                     +vigorous_ac+moderate_ac, data=data_male2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m3_OR.csv")
+write.csv(confi,file="m3_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m3_p.csv")
+```
+
+12-19岁female data_female2 logistic回归
+```{r}
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat, data=data_female2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat+ age + BMI_cat2 + race + PIR + cycle+contraceptive, data=data_female2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+
+
+#m3
+lg_model <- multinom(VitD_cat~ cotinine_cat + age + BMI_cat2 + race + PIR + cycle + contraceptive+vigorous_ac+moderate_ac , data=data_female2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m3_OR.csv")
+write.csv(confi,file="m3_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m3_p.csv")
+```
+
+
+
+
+12-19岁多元线性回归
+-----------------------------------------------------------------------------------------------------------
+12-19岁全体多元线性回归
+```{r}
+data2 <- mutate(data2,log_VitD=log(VitD))
+
+
+fit0 <- lm(log_VitD ~ log_cotinine , data=data2)
+summary(fit0)
+round(confint(fit0),6)
+
+fit1 <- lm(log_VitD ~ log_cotinine +gender+ age + BMI_cat2 + race + PIR + cycle , data=data2)
+summary(fit1)
+round(confint(fit1),6)
+
+fit2 <- lm(log_VitD ~ log_cotinine  +gender+ age + BMI_cat2 + race + PIR + cycle 
+            + vigorous_ac  + moderate_ac, data=data2) 
+summary(fit2)
+round(confint(fit2),6)
+
+
+```
+
+12-19岁male多元线性回归
+```{r}
+data_male2 <- mutate(data_male2,log_VitD=log(VitD))
+
+
+fit0 <- lm(log_VitD ~ log_cotinine , data=data_male2)
+summary(fit0)
+round(confint(fit0),6)
+
+fit1 <- lm(log_VitD ~ log_cotinine  + age + BMI_cat2 + race + PIR + cycle, data=data_male2)
+summary(fit1)
+round(confint(fit1),6)
+
+fit2 <- lm(log_VitD ~ log_cotinine  + age + BMI_cat2 + race + PIR + cycle 
+                     +vigorous_ac+moderate_ac , data=data_male2) 
+summary(fit2)
+round(confint(fit2),6)
+```
+
+12-19岁female多元线性回归
+```{r}
+data_female2 <- mutate(data_female2,log_VitD=log(VitD))
+
+
+fit0 <- lm(log_VitD ~ log_cotinine , data=data_female2)
+summary(fit0)
+round(confint(fit0),6)
+
+fit1 <- lm(log_VitD ~ log_cotinine  + age + BMI_cat2 + race + PIR + cycle +contraceptive , data=data_female2)
+summary(fit1)
+round(confint(fit1),6)
+
+fit2 <- lm(log_VitD ~ log_cotinine  + age + BMI_cat2 + race + PIR + cycle +contraceptive
+                     +vigorous_ac+moderate_ac , data=data_female2) 
+summary(fit2)
+round(confint(fit2),6)
+```
+
+
+
+
+3-11岁logistic回归
+-----------------------------------------------------------------------------------------------------------------
+3-11岁全体 data1 logistic回归
+```{r}
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat, data=data1)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat +gender+ age + BMI_cat2 + race + PIR + cycle , data=data1)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+```
+
+3-11岁male data_male1 logistic回归
+```{r}
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat, data=data_male1)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat+ age + BMI_cat2 + race + PIR + cycle, data=data_male1)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+```
+
+3-11岁female data_female1 logistic回归
+```{r}
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat, data=data_female1)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat+ age + BMI_cat2 + race + PIR + cycle, data=data_female1)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+
+```
+
+
+
+
+3-11岁多元线性回归
+-----------------------------------------------------------------------------------------------------------
+3-11岁全体多元线性回归
+```{r}
+data1 <- mutate(data1,log_VitD=log(VitD))
+
+
+fit0 <- lm(log_VitD ~ log_cotinine , data=data1)
+summary(fit0)
+round(confint(fit0),6)
+
+fit1 <- lm(log_VitD ~ log_cotinine +gender+ age + BMI_cat2 + race + PIR + cycle , data=data1)
+summary(fit1)
+round(confint(fit1),6)
+
+```
+
+3-11岁male多元线性回归
+```{r}
+data_male1 <- mutate(data_male1,log_VitD=log(VitD))
+
+
+fit0 <- lm(log_VitD ~ log_cotinine , data=data_male1)
+summary(fit0)
+round(confint(fit0),6)
+
+fit1 <- lm(log_VitD ~ log_cotinine  + age + BMI_cat2 + race + PIR + cycle, data=data_male1)
+summary(fit1)
+round(confint(fit1),6)
+
+```
+
+3-11岁female多元线性回归
+```{r}
+data_female1 <- mutate(data_female1,log_VitD=log(VitD))
+
+
+fit0 <- lm(log_VitD ~ log_cotinine , data=data_female1)
+summary(fit0)
+round(confint(fit0),6)
+
+fit1 <- lm(log_VitD ~ log_cotinine  + age + BMI_cat2 + race + PIR + cycle, data=data_female1)
+summary(fit1)
+round(confint(fit1),6)
+
+```
+
+
+3-11岁的人把主动吸烟和被动吸烟并成一组重新分析logistic回归
+-------------------------------------------------------------------------------------------------------------------
+3-11岁的人把主动吸烟和被动吸烟并成一组重新分析
+
+
+3-11岁全体 data1 logistic回归
+```{r}
+#把主动吸烟和被动吸烟并成一组
+data1$cotinine_cat <- as.character(data1$cotinine_cat)
+data1 <- mutate(data1,cotinine_cat2=ifelse(cotinine_cat=="active_smoker","heavy_exposure",cotinine_cat))
+data1$cotinine_cat <- factor(data1$cotinine_cat)
+data1$cotinine_cat2 <- factor(data1$cotinine_cat2)
+
+data1$cotinine_cat <- relevel(data1$cotinine_cat, "nonsmoker")#"nonsmoker"作为ref
+data1$cotinine_cat2 <- relevel(data1$cotinine_cat2, "nonsmoker")#"nonsmoker"作为ref
+
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat2, data=data1)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat2 +gender+ age + BMI_cat2 + race + PIR + cycle , data=data1)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+```
+
+
+3-11岁female data_female1 logistic回归
+```{r}
+
+#把主动吸烟和被动吸烟并成一组
+data_female1$cotinine_cat <- as.character(data_female1$cotinine_cat)
+data_female1 <- mutate(data_female1,cotinine_cat2=ifelse(cotinine_cat=="active_smoker","heavy_exposure",cotinine_cat))
+data_female1$cotinine_cat <- factor(data_female1$cotinine_cat)
+data_female1$cotinine_cat2 <- factor(data_female1$cotinine_cat2)
+
+data_female1$cotinine_cat <- relevel(data_female1$cotinine_cat, "nonsmoker")#"nonsmoker"作为ref
+data_female1$cotinine_cat2 <- relevel(data_female1$cotinine_cat2, "nonsmoker")#"nonsmoker"作为ref
+
+
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat2, data=data_female1)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat2+ age + BMI_cat2 + race + PIR + cycle, data=data_female1)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+
+```
+
+
+3-11岁male data_male1 logistic回归
+```{r}
+
+#把主动吸烟和被动吸烟并成一组
+data_male1$cotinine_cat <- as.character(data_male1$cotinine_cat)
+data_male1 <- mutate(data_male1,cotinine_cat2=ifelse(cotinine_cat=="active_smoker","heavy_exposure",cotinine_cat))
+data_male1$cotinine_cat <- factor(data_male1$cotinine_cat)
+data_male1$cotinine_cat2 <- factor(data_male1$cotinine_cat2)
+
+data_male1$cotinine_cat <- relevel(data_male1$cotinine_cat, "nonsmoker")#"nonsmoker"作为ref
+data_male1$cotinine_cat2 <- relevel(data_male1$cotinine_cat2, "nonsmoker")#"nonsmoker"作为ref
+
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat2, data=data_male1)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat2+ age + BMI_cat2 + race + PIR + cycle, data=data_male1)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+```
+
+
+
+
+12-19岁的人把主动吸烟和被动吸烟并成一组重新分析logistic回归
+-----------------------------------------------------------------------------------------------------------------
+12-19岁的人把主动吸烟和被动吸烟并成一组重新分析
+
+12-19岁全体 data2 logistic回归
+```{r}
+#把主动吸烟和被动吸烟并成一组
+data2$cotinine_cat <- as.character(data2$cotinine_cat)
+data2 <- mutate(data2,cotinine_cat2=ifelse(cotinine_cat=="active_smoker","heavy_exposure",cotinine_cat))
+data2$cotinine_cat <- factor(data2$cotinine_cat)
+data2$cotinine_cat2 <- factor(data2$cotinine_cat2)
+
+data2$cotinine_cat <- relevel(data2$cotinine_cat, "nonsmoker")#"nonsmoker"作为ref
+data2$cotinine_cat2 <- relevel(data2$cotinine_cat2, "nonsmoker")#"nonsmoker"作为ref
+
+
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat2, data=data2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat2 +gender+ age + BMI_cat2 + race + PIR + cycle , data=data2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+
+#m3
+lg_model <- multinom(VitD_cat~ cotinine_cat2 +gender+ age + BMI_cat2 + race + PIR + cycle +vigorous_ac+moderate_ac, data=data2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m3_OR.csv")
+write.csv(confi,file="m3_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m3_p.csv")
+```
+
+12-19岁male data_male2 logistic回归
+```{r}
+#把主动吸烟和被动吸烟并成一组
+data_male2$cotinine_cat <- as.character(data_male2$cotinine_cat)
+data_male2 <- mutate(data_male2,cotinine_cat2=ifelse(cotinine_cat=="active_smoker","heavy_exposure",cotinine_cat))
+data_male2$cotinine_cat <- factor(data_male2$cotinine_cat)
+data_male2$cotinine_cat2 <- factor(data_male2$cotinine_cat2)
+
+data_male2$cotinine_cat <- relevel(data_male2$cotinine_cat, "nonsmoker")#"nonsmoker"作为ref
+data_male2$cotinine_cat2 <- relevel(data_male2$cotinine_cat2, "nonsmoker")#"nonsmoker"作为ref
+
+
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat2, data=data_male2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat2+ age + BMI_cat2 + race + PIR + cycle, data=data_male2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+
+
+#m3
+lg_model <- multinom(VitD_cat~ cotinine_cat2 + age + BMI_cat2 + race + PIR + cycle 
+                     +vigorous_ac+moderate_ac, data=data_male2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m3_OR.csv")
+write.csv(confi,file="m3_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m3_p.csv")
+```
+
+12-19岁female data_female2 logistic回归
+```{r}
+#把主动吸烟和被动吸烟并成一组
+data_female2$cotinine_cat <- as.character(data_female2$cotinine_cat)
+data_female2 <- mutate(data_female2,cotinine_cat2=ifelse(cotinine_cat=="active_smoker","heavy_exposure",cotinine_cat))
+data_female2$cotinine_cat <- factor(data_female2$cotinine_cat)
+data_female2$cotinine_cat2 <- factor(data_female2$cotinine_cat2)
+
+data_female2$cotinine_cat <- relevel(data_female2$cotinine_cat, "nonsmoker")#"nonsmoker"作为ref
+data_female2$cotinine_cat2 <- relevel(data_female2$cotinine_cat2, "nonsmoker")#"nonsmoker"作为ref
+
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat2, data=data_female2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat2+ age + BMI_cat2 + race + PIR + cycle+contraceptive, data=data_female2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+
+
+#m3
+lg_model <- multinom(VitD_cat~ cotinine_cat2 + age + BMI_cat2 + race + PIR + cycle + contraceptive+vigorous_ac+moderate_ac , data=data_female2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m3_OR.csv")
+write.csv(confi,file="m3_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m3_p.csv")
+```
+
+
+
+
+------------------------------------------------------------------------------------------------------------------
+12-19岁cotinine暴露按0.05重新分类（还是把主动吸烟和被动吸烟并成一组）然后作logistic回归
+
+12-19岁全体
+```{r}
+
+data2 <- mutate(data2,cotinine_cat2=ifelse(cotinine<0.05,"nonsmoker","exposed"))
+data2$cotinine_cat2 <- factor(data2$cotinine_cat2)
+data2$cotinine_cat2 <- relevel(data2$cotinine_cat2, "nonsmoker")#"nonsmoker"作为ref
+
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat2, data=data2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat2 +gender+ age + BMI_cat2 + race + PIR + cycle , data=data2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+
+#m3
+lg_model <- multinom(VitD_cat~ cotinine_cat2 +gender+ age + BMI_cat2 + race + PIR + cycle +vigorous_ac+moderate_ac, data=data2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m3_OR.csv")
+write.csv(confi,file="m3_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m3_p.csv")
+```
+
+12-19岁female
+```{r}
+data_female2 <- mutate(data_female2,cotinine_cat2=ifelse(cotinine<0.05,"nonsmoker","exposed"))
+data_female2$cotinine_cat2 <- factor(data_female2$cotinine_cat2)
+data_female2$cotinine_cat2 <- relevel(data_female2$cotinine_cat2, "nonsmoker")#"nonsmoker"作为ref
+
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat2, data=data_female2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat2+ age + BMI_cat2 + race + PIR + cycle+contraceptive, data=data_female2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+
+
+#m3
+lg_model <- multinom(VitD_cat~ cotinine_cat2 + age + BMI_cat2 + race + PIR + cycle + contraceptive+vigorous_ac+moderate_ac , data=data_female2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m3_OR.csv")
+write.csv(confi,file="m3_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m3_p.csv")
+```
+
+
+12-19岁male
+```{r}
+data_male2 <- mutate(data_male2,cotinine_cat2=ifelse(cotinine<0.05,"nonsmoker","exposed"))
+data_male2$cotinine_cat2 <- factor(data_male2$cotinine_cat2)
+data_male2$cotinine_cat2 <- relevel(data_male2$cotinine_cat2, "nonsmoker")#"nonsmoker"作为ref
+
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat2, data=data_male2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat2+ age + BMI_cat2 + race + PIR + cycle, data=data_male2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+
+
+#m3
+lg_model <- multinom(VitD_cat~ cotinine_cat2 + age + BMI_cat2 + race + PIR + cycle 
+                     +vigorous_ac+moderate_ac, data=data_male2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m3_OR.csv")
+write.csv(confi,file="m3_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m3_p.csv")
+
+```
+
+
+------------------------------------------------------------------------------------------------------------------
+3-11岁cotinine暴露按0.05重新分类（还是把主动吸烟和被动吸烟并成一组）然后作logistic回归
+
+
+3-11岁全体
+```{r}
+data1 <- mutate(data1,cotinine_cat2=ifelse(cotinine<0.05,"nonsmoker","exposed"))
+data1$cotinine_cat2 <- factor(data1$cotinine_cat2)
+data1$cotinine_cat2 <- relevel(data1$cotinine_cat2, "nonsmoker")#"nonsmoker"作为ref
+
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat2, data=data1)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat2 +gender+ age + BMI_cat2 + race + PIR + cycle , data=data1)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+```
+
+3-11岁female data_female1 logistic回归
+```{r}
+
+data_female1 <- mutate(data_female1,cotinine_cat2=ifelse(cotinine<0.05,"nonsmoker","exposed"))
+data_female1$cotinine_cat2 <- factor(data_female1$cotinine_cat2)
+data_female1$cotinine_cat2 <- relevel(data_female1$cotinine_cat2, "nonsmoker")#"nonsmoker"作为ref
+
+
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat2, data=data_female1)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat2+ age + BMI_cat2 + race + PIR + cycle, data=data_female1)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+
+```
+
+
+3-11岁male data_male1 logistic回归
+```{r}
+
+data_male1 <- mutate(data_male1,cotinine_cat2=ifelse(cotinine<0.05,"nonsmoker","exposed"))
+data_male1$cotinine_cat2 <- factor(data_male1$cotinine_cat2)
+data_male1$cotinine_cat2 <- relevel(data_male1$cotinine_cat2, "nonsmoker")#"nonsmoker"作为ref
+
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat2, data=data_male1)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat2+ age + BMI_cat2 + race + PIR + cycle, data=data_male1)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+```
+
+
+
+12-19岁cotinine暴露按0.015重新分类（还是把主动吸烟和被动吸烟并成一组）然后作logistic回归
+----------------------------------------------------------------------------------------------------------------
+12-19岁cotinine暴露按0.015重新分类（还是把主动吸烟和被动吸烟并成一组）然后作logistic回归
+
+12-19岁全体
+```{r}
+
+data2 <- mutate(data2,cotinine_cat2=ifelse(cotinine<0.015,"nonsmoker","exposed"))
+data2$cotinine_cat2 <- factor(data2$cotinine_cat2)
+data2$cotinine_cat2 <- relevel(data2$cotinine_cat2, "nonsmoker")#"nonsmoker"作为ref
+
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat2, data=data2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat2 +gender+ age + BMI_cat2 + race + PIR + cycle , data=data2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+
+#m3
+lg_model <- multinom(VitD_cat~ cotinine_cat2 +gender+ age + BMI_cat2 + race + PIR + cycle +vigorous_ac+moderate_ac, data=data2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m3_OR.csv")
+write.csv(confi,file="m3_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m3_p.csv")
+```
+
+12-19岁female
+```{r}
+data_female2 <- mutate(data_female2,cotinine_cat2=ifelse(cotinine<0.015,"nonsmoker","exposed"))
+data_female2$cotinine_cat2 <- factor(data_female2$cotinine_cat2)
+data_female2$cotinine_cat2 <- relevel(data_female2$cotinine_cat2, "nonsmoker")#"nonsmoker"作为ref
+
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat2, data=data_female2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat2+ age + BMI_cat2 + race + PIR + cycle+contraceptive, data=data_female2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+
+
+#m3
+lg_model <- multinom(VitD_cat~ cotinine_cat2 + age + BMI_cat2 + race + PIR + cycle + contraceptive+vigorous_ac+moderate_ac , data=data_female2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m3_OR.csv")
+write.csv(confi,file="m3_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m3_p.csv")
+```
+
+
+12-19岁male
+```{r}
+data_male2 <- mutate(data_male2,cotinine_cat2=ifelse(cotinine<0.015,"nonsmoker","exposed"))
+data_male2$cotinine_cat2 <- factor(data_male2$cotinine_cat2)
+data_male2$cotinine_cat2 <- relevel(data_male2$cotinine_cat2, "nonsmoker")#"nonsmoker"作为ref
+
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat2, data=data_male2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat2+ age + BMI_cat2 + race + PIR + cycle, data=data_male2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+
+
+#m3
+lg_model <- multinom(VitD_cat~ cotinine_cat2 + age + BMI_cat2 + race + PIR + cycle 
+                     +vigorous_ac+moderate_ac, data=data_male2)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m3_OR.csv")
+write.csv(confi,file="m3_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m3_p.csv")
+
+```
+
+
+
+
+
+3-11岁cotinine暴露按0.015重新分类（还是把主动吸烟和被动吸烟并成一组）然后作logistic回归
+------------------------------------------------------------------------------------------------------------------
+3-11岁cotinine暴露按0.015重新分类（还是把主动吸烟和被动吸烟并成一组）然后作logistic回归
+
+
+3-11岁全体
+```{r}
+data1 <- mutate(data1,cotinine_cat2=ifelse(cotinine<0.015,"nonsmoker","exposed"))
+data1$cotinine_cat2 <- factor(data1$cotinine_cat2)
+data1$cotinine_cat2 <- relevel(data1$cotinine_cat2, "nonsmoker")#"nonsmoker"作为ref
+
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat2, data=data1)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat2 +gender+ age + BMI_cat2 + race + PIR + cycle , data=data1)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+```
+
+3-11岁female data_female1 logistic回归
+```{r}
+
+data_female1 <- mutate(data_female1,cotinine_cat2=ifelse(cotinine<0.015,"nonsmoker","exposed"))
+data_female1$cotinine_cat2 <- factor(data_female1$cotinine_cat2)
+data_female1$cotinine_cat2 <- relevel(data_female1$cotinine_cat2, "nonsmoker")#"nonsmoker"作为ref
+
+
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat2, data=data_female1)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat2+ age + BMI_cat2 + race + PIR + cycle, data=data_female1)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+
+```
+
+
+3-11岁male data_male1 logistic回归
+```{r}
+
+data_male1 <- mutate(data_male1,cotinine_cat2=ifelse(cotinine<0.015,"nonsmoker","exposed"))
+data_male1$cotinine_cat2 <- factor(data_male1$cotinine_cat2)
+data_male1$cotinine_cat2 <- relevel(data_male1$cotinine_cat2, "nonsmoker")#"nonsmoker"作为ref
+
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat2, data=data_male1)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat2+ age + BMI_cat2 + race + PIR + cycle, data=data_male1)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+```
+
+
+
+按年份分层做logistic
+------------------------------------------------------------------------------------------------------------------
+```{r}
+data_cycle1 <- filter(data_use,cycle=="01-02")
+data_cycle2 <- filter(data_use,cycle=="03-04")
+data_cycle3 <- filter(data_use,cycle=="05-06")
+data_cycle4 <- filter(data_use,cycle=="07-08")
+data_cycle5 <- filter(data_use,cycle=="09-10")
+data_cycle6 <- filter(data_use,cycle=="11-12")
+data_cycle7 <- filter(data_use,cycle=="13-14")
+```
+
+
+logistic回归
+```{r}
+
+lg_model <- multinom(VitD_cat~ cotinine_cat+gender+age+race+BMI_cat2+PIR, data=data_use)
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="OR.csv")
+write.csv(confi,file="confi.csv")
+#z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+#p<-(1-pnorm(abs(z),0,1))*2
+#write.csv(p,file="m0_p.csv")
+
+```
+
+
+多元线性回归
+```{r}
+data_use <- mutate(data_use,log_VitD=log(VitD))
+
+
+fit0 <- lm(log_VitD ~ log_cotinine , data = data_use)
+summary(fit0)
+confint(fit0)
+
+fit1 <- lm(log_VitD ~ log_cotinine + gender + age + BMI_cat2 + race + PIR, data=data_use)
+summary(fit1)
+confint(fit1)
+
+```
+
+
+按race分层做logistic
+------------------------------------------------------------------------------------------------------------------
+按race分层
+
+```{r}
+data_use$race <- as.character(data_use$race)
+data_Hispanic <- filter(data_use,race=="Hispanic") 
+data_NH_Black <- filter(data_use,race=="Non-Hispanic Black")
+data_NH_White <- filter(data_use,race=="Non-Hispanic White")
+data_other <- filter(data_use,race=="Other Race")
+data_use$race <- as.factor(data_use$race)
+
+
+```
+
+
+logistic回归data_Hispanic
+```{r}
+data_Hispanic$race <- as.factor(data_Hispanic$race)
+
+
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat, data=data_Hispanic)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat+ age + gender+ BMI_cat2 + PIR + cycle, data=data_Hispanic)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+
+```
+
+
+logistic回归data_NH_Black
+```{r}
+data_NH_Black$race <- as.factor(data_NH_Black$race)
+
+
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat, data=data_NH_Black)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat+ age + gender+ BMI_cat2 + PIR + cycle, data=data_NH_Black)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+
+```
+
+logistic回归data_NH_White
+```{r}
+data_NH_White$race <- as.factor(data_NH_White$race)
+
+
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat, data=data_NH_White)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat+ age + gender+ BMI_cat2 + PIR + cycle, data=data_NH_White)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+
+```
+
+logistic回归data_other
+```{r}
+data_other$race <- as.factor(data_other$race)
+
+
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat, data=data_other)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat+ age + gender+ BMI_cat2 + PIR + cycle, data=data_other)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+
+```
+
+
+
+按BMI分层做logistic
+---------------------------------------------------------------------------------------------------------------
+按BMI分层
+```{r}
+data_use$BMI_cat2 <- as.character(data_use$BMI_cat2)
+
+data_normal <- filter(data_use,BMI_cat2=="normal") 
+data_overweight <- filter(data_use,BMI_cat2=="overweight")
+data_obese <- filter(data_use,BMI_cat2=="obese")
+
+data_use$BMI_cat2 <- as.factor(data_use$BMI_cat2)
+
+
+```
+
+
+logistic回归data_normal
+```{r}
+data_normal$BMI_cat2 <- as.factor(data_normal$BMI_cat2)
+
+
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat, data=data_normal)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat+ age + gender+ race + PIR + cycle, data=data_normal)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+
+```
+
+
+logistic回归data_overweight
+```{r}
+data_overweight$BMI_cat2 <- as.factor(data_overweight$BMI_cat2)
+
+
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat, data=data_overweight)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat+ age + gender+ race + PIR + cycle, data=data_overweight)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+
+```
+
+logistic回归data_obese
+```{r}
+data_obese$BMI_cat2 <- as.factor(data_obese$BMI_cat2)
+
+
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat, data=data_obese)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat+ age + gender+ race + PIR + cycle, data=data_obese)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+
+```
+
+
+
+
+未成年人按race重新分组
+----------------------------------------------------------------------------------------------------------
+
+data_child_his
+```{r}
+data_child_his <- filter(data_Hispanic,age>=3&age<=19)
+data_child_his <- mutate(data_child_his,cotinine_cat2=ifelse(cotinine<0.05,"nonsmoker","exposed"))
+data_child_his$cotinine_cat2 <- factor(data_child_his$cotinine_cat2)
+data_child_his$cotinine_cat2 <- relevel(data_child_his$cotinine_cat2, "nonsmoker")#"nonsmoker"作为ref
+ 
+
+  
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat2, data=data_child_his)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat2 +gender+ age + BMI_cat2 + PIR + cycle , data=data_child_his)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+```
+
+data_child_black
+```{r}  
+data_child_black <- filter(data_NH_Black,age>=3&age<=19)
+data_child_black <- mutate(data_child_black,cotinine_cat2=ifelse(cotinine<0.05,"nonsmoker","exposed"))
+data_child_black$cotinine_cat2 <- factor(data_child_black$cotinine_cat2)
+data_child_black$cotinine_cat2 <- relevel(data_child_black$cotinine_cat2, "nonsmoker")#"nonsmoker"作为ref
+  
+
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat2, data=data_child_black)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat2 +gender+ age + BMI_cat2 + PIR + cycle , data=data_child_black)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+```
+
+data_child_white
+```{r}
+
+data_child_white <- filter(data_NH_White,age>=3&age<=19)
+data_child_white <- mutate(data_child_white,cotinine_cat2=ifelse(cotinine<0.05,"nonsmoker","exposed"))
+data_child_white$cotinine_cat2 <- factor(data_child_white$cotinine_cat2)
+data_child_white$cotinine_cat2 <- relevel(data_child_white$cotinine_cat2, "nonsmoker")#"nonsmoker"作为ref
+  
+
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat2, data=data_child_white)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat2 +gender+ age + BMI_cat2 + PIR + cycle , data=data_child_white)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+```
+
+
+data_child_other
+```{r}
+data_child_other <- filter(data_other,age>=3&age<=19)
+data_child_other <- mutate(data_child_other,cotinine_cat2=ifelse(cotinine<0.05,"nonsmoker","exposed"))
+data_child_other$cotinine_cat2 <- factor(data_child_other$cotinine_cat2)
+data_child_other$cotinine_cat2 <- relevel(data_child_other$cotinine_cat2, "nonsmoker")#"nonsmoker"作为ref
+  
+
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat2, data=data_child_other)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat2 +gender+ age + BMI_cat2 + PIR + cycle , data=data_child_other)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+
+```
+
+```{r}
+data_ado_his <- filter(data_Hispanic,age>=12&age<=19)
+data_ado_his <- mutate(data_ado_his,cotinine_cat2=ifelse(cotinine<0.05,"nonsmoker","exposed"))
+
+data_ado_black <- filter(data_NH_Black,age>=12&age<=19)
+data_ado_black <- mutate(data_ado_black,cotinine_cat2=ifelse(cotinine<0.05,"nonsmoker","exposed"))
+
+data_ado_white <- filter(data_NH_White,age>=12&age<=19)
+ddata_ado_white <- mutate(data_ado_white,cotinine_cat2=ifelse(cotinine<0.05,"nonsmoker","exposed"))
+
+data_ado_other <- filter(data_other,age>=12&age<=19)
+data_ado_other <- mutate(data_ado_other,cotinine_cat2=ifelse(cotinine<0.05,"nonsmoker","exposed"))
+
+```
+
+
+纯化人群logistic回归（白人、BMI normal）
+
+选出纯化人群
+```{r}
+data_use$race <- as.character(data_use$race)
+data_use$BMI_cat2 <- as.character(data_use$BMI_cat2)
+data_chun <- filter(data_use,race=="Non-Hispanic White" &  BMI_cat2=="normal")
+data_use$race <- as.factor(data_use$race)
+data_use$BMI_cat2 <- as.factor(data_use$BMI_cat2)
+data_chun$race <- as.factor(data_chun$race)
+data_chun$BMI_cat2 <- as.factor(data_chun$BMI_cat2)
+
+data_chun1 <- filter(data_chun,age>=3 & age<=11)
+data_chun2 <- filter(data_chun,age>=12 & age<=19)
+data_chun3 <- filter(data_chun,age>=20 & age<=59)
+data_chun4 <- filter(data_chun,age>=60)
+
+```
+
+对纯化人群做logistic回归
+```{r}
+#crude
+lg_model <- multinom(VitD_cat~ cotinine_cat, data=data_chun)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m0_OR.csv")
+write.csv(confi,file="m0_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m0_p.csv")
+
+#m1
+lg_model <- multinom(VitD_cat~ cotinine_cat+ age + gender + PIR + cycle, data=data_chun)
+
+summary(lg_model)
+(OR <- exp(coef(lg_model)))
+(confi <- exp(confint(lg_model)))
+write.csv(OR,file="m1_OR.csv")
+write.csv(confi,file="m1_confi.csv")
+z<- summary(lg_model)$coefficients/summary(lg_model)$standard.errors
+p<-(1-pnorm(abs(z),0,1))*2
+write.csv(p,file="m1_p.csv")
+
+```
+
